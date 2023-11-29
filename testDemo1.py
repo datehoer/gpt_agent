@@ -3,6 +3,24 @@ import re
 import pyquery
 from config import *
 url = "https://{}/v1/chat/completions".format(BASE_API_URL)
+headers = {
+    "accept": "*/*",
+    "accept-language": "zh-CN,zh;q=0.9,en;q=0.8",
+    "sec-ch-ua": "\"Chromium\";v=\"116\", \"Not)A;Brand\";v=\"24\", \"Google Chrome\";v=\"116\"",
+    "sec-ch-ua-arch": "\"x86\"",
+    "sec-ch-ua-bitness": "\"64\"",
+    "sec-ch-ua-full-version": "\"116.0.5845.187\"",
+    "sec-ch-ua-full-version-list": "\"Chromium\";v=\"116.0.5845.187\", \"Not)A;Brand\";v=\"24.0.0.0\", \"Google Chrome\";v=\"116.0.5845.187\"",
+    "sec-ch-ua-mobile": "?0",
+    "sec-ch-ua-model": "\"\"",
+    "sec-ch-ua-platform": "\"macOS\"",
+    "sec-ch-ua-platform-version": "\"10.13.6\"",
+    "sec-ch-ua-wow64": "?0",
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-origin",
+    "Referrer-Policy": "origin"
+}
 
 
 class ChatBot:
@@ -26,73 +44,62 @@ class ChatBot:
         completion = httpx.post(url, headers=self.headers, json={
             "model": "gpt-3.5-turbo-1106",
             "messages": self.messages,
-        })
+        }, timeout=120, proxies=PROXY)
         return completion.json()['choices'][0]['message']['content']
 
 
 prompt = """
-你在思考、行动、暂停、观察的循环中运行。
-在循环结束时输出一个答案
-使用想法来描述您对所问问题的想法。
-使用“操作”运行您可以执行的操作之一 - 然后返回“暂停”。
-观察将是运行这些操作的结果。
-请务必使用中文以及中文符号。
+You run in a loop of Thought, Action, PAUSE, Observation.
+At the end of the loop you output an Answer.
+Use Thought to describe your thoughts about the question you have been asked.
+Use Action to run one of the actions available to you - then return PAUSE.
+Observation will be the result of running those actions.
 
-您可以采取的行动有：
+Your available actions are:
 
 calculate:
-例如 计算：4 * 7 / 3
-运行计算并返回数字 - 使用 Python，因此如有必要请务必使用浮点语法
+e.g. calculate: 4 * 7 / 3
+Runs a calculation and returns the number - uses Python so be sure to use floating point syntax if necessary.
 
 bing_search:
-例如 bing_search：Django
-在 Bing 中搜索该术语。 执行 Bing 搜索后，使用 open_url 操作访问每个结果并获取页面的文本。
-
-wikipedia:
-例如 wikipedia: Django
-返回搜索维基百科的摘要
-
-simon_blog_search:
-例如 simon_blog_search: Django
-在 Simon 的博客中搜索该术语
+e.g. bing_search: Django
+Search Bing for that term.
 
 open_url:
 e.g. open_url: https://simonwillison.net/
-使用此操作打开搜索结果中的每个 URL 并返回页面的文本。
+Returns the text of the page at that URL. This action should only be used after a bing_search action.
 
-如果有机会，请务必在bing_search上查找内容。
+wikipedia:
+e.g. wikipedia: Django
+Returns a summary from searching Wikipedia.
 
-会话示例：
+Always look things up on bing_search if you have the opportunity to do so.
 
-问：法国的首都是哪里？
-想法：我应该在bing_search上查找法国。
-行动：bing_search：法国
-暂停
+Example session:
 
-您将再次被呼叫并收到以下信息：
+Question: What is the capital of France?
+Thought: I should first search Bing for information about France.
+Action: bing_search: France
+PAUSE
 
-观察：法国是一个国家。 首都是巴黎。
+You will be called again with this:
 
-然后你输出：
+Observation: Bing search results for France are available.
+Thought: I should find the one I think is most relevant from the search results and open its URL to find more detailed information.
+Action: open_url: [selected link from the search results]
+PAUSE
 
-答：法国的首都是巴黎。
+You will be called again with this:
 
-如果操作是 Bing 搜索：
-想法：我需要分析 Bing 的搜索结果。
-操作：open_url：[来自 Bing 搜索结果的 URL]
-暂停
+Observation: The selected page mentions that France is a country and its capital is Paris.
 
-您将再次被呼叫并收到以下信息：
+You then output:
 
-观察：[来自open_url的文本]
-
-然后，您分析文本以形成您的下一个观察或答案。
+Answer: The capital of France is Paris.
 """.strip()
 
 
-
-action_re1 = re.compile('^操作[:|：](\w+)[:|：](.*)$')
-action_re2 = re.compile('^行动[:|：](\w+)[:|：](.*)$')
+action_re = re.compile('^Action[:|：] (\w+)[:|：] (.*)$')
 
 
 def query(question, max_turns=10):
@@ -103,9 +110,7 @@ def query(question, max_turns=10):
         i += 1
         result = bot(next_prompt)
         print(result)
-        actions = [action_re1.match(a) for a in result.split('\n') if action_re1.match(a)]
-        if len(actions) == 0:
-            actions = [action_re2.match(a) for a in result.split('\n') if action_re2.match(a)]
+        actions = [action_re.match(a) for a in result.split('\n') if action_re.match(a)]
         if actions:
             # There is an action to run
             action, action_input = actions[0].groups()
@@ -113,43 +118,23 @@ def query(question, max_turns=10):
                 raise Exception("Unknown action: {}: {}".format(action, action_input))
             print(" -- running {} {}".format(action, action_input))
             observation = known_actions[action](action_input)
-            print("Observation:", observation)
+            # print("Observation:", observation)
             next_prompt = "Observation: {}".format(observation)
         else:
             return
 
 
-def wikipedia(q):
+def wikipedia(question):
     return httpx.get("https://en.wikipedia.org/w/api.php", params={
         "action": "query",
         "list": "search",
-        "srsearch": q,
+        "srsearch": question,
         "format": "json"
     }, proxies=PROXY).json()["query"]["search"][0]["snippet"]
 
 
-def simon_blog_search(q):
-    results = httpx.get("https://datasette.simonwillison.net/simonwillisonblog.json", proxies=PROXY, params={
-        "sql": """
-        select
-          blog_entry.title || ': ' || substr(html_strip_tags(blog_entry.body), 0, 1000) as text,
-          blog_entry.created
-        from
-          blog_entry join blog_entry_fts on blog_entry.rowid = blog_entry_fts.rowid
-        where
-          blog_entry_fts match escape_fts(:q)
-        order by
-          blog_entry_fts.rank
-        limit
-          1""".strip(),
-        "_shape": "array",
-        "q": q,
-    }).json()
-    return results[0]["text"]
-
-
-def bing_search(q):
-    html = httpx.get("https://www.bing.com/search", params={"q": q}, proxies=PROXY)
+def bing_search(question):
+    html = httpx.get("https://www.bing.com/search", params={"q": question}, proxies=PROXY, headers=headers, verify=False)
     doc = pyquery.PyQuery(html.content)
     items = doc("#b_results .b_algo").items()
     data = []
@@ -168,6 +153,8 @@ def bing_search(q):
 def open_url(link):
     html = httpx.get(link, proxies=PROXY)
     doc = pyquery.PyQuery(html.content)
+    doc('script').remove()
+    doc('style').remove()
     text = doc("body").text()
     return text
 
@@ -179,10 +166,9 @@ def calculate(what):
 known_actions = {
     "wikipedia": wikipedia,
     "calculate": calculate,
-    "simon_blog_search": simon_blog_search,
     "bing_search": bing_search,
     "open_url": open_url,
 }
 
-question = "how to create gpt agent, i want it can use bing to search?"
-query(question)
+q = "how to create vue page?"
+query(q)

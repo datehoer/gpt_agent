@@ -31,53 +31,71 @@ class ChatBot:
 
 
 prompt = """
-You run in a loop of Thought, Action, PAUSE, Observation.
-At the end of the loop you output an Answer
-Use Thought to describe your thoughts about the question you have been asked.
-Use Action to run one of the actions available to you - then return PAUSE.
-Observation will be the result of running those actions.
+你在思考、行动、暂停、观察的循环中运行。
+在循环结束时输出一个答案
+使用想法来描述您对所问问题的想法。
+使用“操作”运行您可以执行的操作之一 - 然后返回“暂停”。
+观察将是运行这些操作的结果。
+请务必使用中文以及中文符号。
 
-Your available actions are:
+您可以采取的行动有：
 
 calculate:
-e.g. calculate: 4 * 7 / 3
-Runs a calculation and returns the number - uses Python so be sure to use floating point syntax if necessary
-
-wikipedia:
-e.g. wikipedia: Django
-Returns a summary from searching Wikipedia
-
-simon_blog_search:
-e.g. simon_blog_search: Django
-Search Simon's blog for that term
+例如 计算：4 * 7 / 3
+运行计算并返回数字 - 使用 Python，因此如有必要请务必使用浮点语法
 
 bing_search:
-e.g. bing_search: Django
-Search Bing for that term
+例如 bing_search：Django
+在 Bing 中搜索该术语。 执行 Bing 搜索后，使用 open_url 操作访问每个结果并获取页面的文本。
 
-Always look things up on Wikipedia if you have the opportunity to do so.
+wikipedia:
+例如 wikipedia: Django
+返回搜索维基百科的摘要
 
-Example session:
+simon_blog_search:
+例如 simon_blog_search: Django
+在 Simon 的博客中搜索该术语
 
-Question: What is the capital of France?
-Thought: I should look up France on Wikipedia
-Action: wikipedia: France
-PAUSE
+open_url:
+e.g. open_url: https://simonwillison.net/
+使用此操作打开搜索结果中的每个 URL 并返回页面的文本。
 
-You will be called again with this:
+如果有机会，请务必在bing_search上查找内容。
 
-Observation: France is a country. The capital is Paris.
+会话示例：
 
-You then output:
+问：法国的首都是哪里？
+想法：我应该在bing_search上查找法国。
+行动：bing_search：法国
+暂停
 
-Answer: The capital of France is Paris
+您将再次被呼叫并收到以下信息：
+
+观察：法国是一个国家。 首都是巴黎。
+
+然后你输出：
+
+答：法国的首都是巴黎。
+
+如果操作是 Bing 搜索：
+想法：我需要分析 Bing 的搜索结果。
+操作：open_url：[来自 Bing 搜索结果的 URL]
+暂停
+
+您将再次被呼叫并收到以下信息：
+
+观察：[来自open_url的文本]
+
+然后，您分析文本以形成您的下一个观察或答案。
 """.strip()
 
 
-action_re = re.compile('^Action: (\w+): (.*)$')
+
+action_re1 = re.compile('^操作[:|：](\w+)[:|：](.*)$')
+action_re2 = re.compile('^行动[:|：](\w+)[:|：](.*)$')
 
 
-def query(question, max_turns=5):
+def query(question, max_turns=10):
     i = 0
     bot = ChatBot(prompt)
     next_prompt = question
@@ -85,7 +103,9 @@ def query(question, max_turns=5):
         i += 1
         result = bot(next_prompt)
         print(result)
-        actions = [action_re.match(a) for a in result.split('\n') if action_re.match(a)]
+        actions = [action_re1.match(a) for a in result.split('\n') if action_re1.match(a)]
+        if len(actions) == 0:
+            actions = [action_re2.match(a) for a in result.split('\n') if action_re2.match(a)]
         if actions:
             # There is an action to run
             action, action_input = actions[0].groups()
@@ -142,7 +162,13 @@ def bing_search(q):
             "link": link,
             "slug": slug,
         })
-    text = "\n".join(["{}: {}".format(d["title"], d["slug"]) for d in data])
+    return data
+
+
+def open_url(link):
+    html = httpx.get(link, proxies=PROXY)
+    doc = pyquery.PyQuery(html.content)
+    text = doc("body").text()
     return text
 
 
@@ -154,8 +180,9 @@ known_actions = {
     "wikipedia": wikipedia,
     "calculate": calculate,
     "simon_blog_search": simon_blog_search,
-    "bing_search": bing_search
+    "bing_search": bing_search,
+    "open_url": open_url,
 }
 
-question = "how to create vue page?"
+question = "how to create gpt agent, i want it can use bing to search?"
 query(question)
